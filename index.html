@@ -25,15 +25,18 @@
       <div class="col">
         <label>Audio (WAV/MP3)</label>
         <input id="audio" type="file" accept=".wav,.mp3"/>
-        <label>Hugging Face Space URL</label>
-        <input id="space" placeholder="https://your-username-your-space.hf.space"/>
-        <small>Public CPU Space is fine. Must accept POST /api/predict or /run/predict with a text prompt and return an image.</small>
+
+        <!-- Space URL field is optional now; we hard-code a default in the JS.
+             You can still override by typing a different URL here. -->
+        <label>Hugging Face Space URL (optional override)</label>
+        <input id="space" placeholder="https://huggingface.co/spaces/Nwt002tech/MuvidGen"/>
+
         <div class="btns">
           <!-- Fallback onclick calls window.AMV_generate -->
           <button id="genBtn" onclick="window.AMV_generate && window.AMV_generate()">Generate Full Video</button>
           <button id="stopBtn" disabled>Stop</button>
         </div>
-        <div class="status" id="status">Idle</div>
+        <div class="status" id="status">Page JS loaded (booting module)…</div>
         <div class="download" id="download"></div>
       </div>
     </section>
@@ -48,15 +51,19 @@
     </footer>
   </div>
 
-  <!-- Tiny inline sanity check (should flip "Idle" → "Page JS loaded") -->
+  <!-- Bootloader: dynamic import with visible error reporting -->
   <script>
-    (function(){
-      var s = document.getElementById('status');
-      if (s) s.textContent = 'Page JS loaded (waiting for module)…';
-    }());
+  (async function(){
+    const s = document.getElementById('status');
+    try {
+      const url = new URL('app.module.js', location.href).toString();
+      await import(url);
+      s.textContent = 'Module imported ✅';
+    } catch (e) {
+      console.error(e);
+      s.textContent = 'Module import error: ' + (e && e.message ? e.message : e);
+    }
+  }());
   </script>
-
-  <!-- ES module app -->
-  <script type="module" src="app.module.js"></script>
 </body>
 </html>
