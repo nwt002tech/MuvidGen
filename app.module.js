@@ -1,4 +1,4 @@
-// app.module.js — iPhone-safe version with hard-coded HF Space + importmap for THREE
+// app.module.js — iPhone-safe recorder with progress, audio-ended stop, and codec fallback
 import * as THREE from 'three';
 import { FontLoader } from 'https://unpkg.com/three@0.161.0/examples/jsm/loaders/FontLoader.js';
 import { TextGeometry } from 'https://unpkg.com/three@0.161.0/examples/jsm/geometries/TextGeometry.js';
@@ -17,11 +17,10 @@ const canvas = $("#stage");
 
 let renderer, scene, camera, singer, bgMesh;
 let running = false;
+let loopRAF = 0;
 
-// --- Default Space ---
 const DEFAULT_SPACE_HFSP = "https://nwt002tech-muvidgen.hf.space/";
 
-// Convert /spaces/{user}/{space} -> https://{user}-{space}.hf.space/
 function toHfSubdomain(u){
   try{
     if (!u) return DEFAULT_SPACE_HFSP;
@@ -32,7 +31,11 @@ function toHfSubdomain(u){
   }catch{ return DEFAULT_SPACE_HFSP; }
 }
 
-function setStatus(msg){ statusEl.textContent = msg; console.log("[AMV]", msg); }
+function setStatus(msg){
+  statusEl.textContent = msg;
+  // console.log for debug if you need it:
+  console.log("[AMV]", msg);
+}
 setStatus("Module loaded ✅");
 
 audioEl?.addEventListener('change', () => {
@@ -43,17 +46,15 @@ function isiOS(){
   return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
-function pickMimeType(){
-  const mp4 = 'video/mp4;codecs="avc1.42E01E,mp4a.40.2"';
-  const webm_vp9 = 'video/webm;codecs=vp9,opus';
-  const webm_vp8 = 'video/webm;codecs=vp8,opus';
-  if (window.MediaRecorder) {
-    if (MediaRecorder.isTypeSupported?.(mp4)) return mp4;
-    if (MediaRecorder.isTypeSupported?.(webm_vp9)) return webm_vp9;
-    if (MediaRecorder.isTypeSupported?.(webm_vp8)) return webm_vp8;
-    return '';
-  }
-  return null;
+function pickMimeCandidates(){
+  // Try MP4 first for iOS, then WebM variants
+  const c = [
+    'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm'
+  ];
+  return c.filter(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported?.(t));
 }
 
 async function setupThree() {
@@ -112,27 +113,27 @@ function onResize(){
   if (camera){ camera.aspect = w/h; camera.updateProjectionMatrix(); }
 }
 
-async function readFileAudio(file){
-  const arrayBuf = await file.arrayBuffer();
+async function decodeAudio(file){
+  const buf = await file.arrayBuffer();
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  const buf = await ctx.decodeAudioData(arrayBuf.slice(0));
-  return {ctx, buf};
+  if (ctx.state === 'suspended') await ctx.resume();
+  const audioBuf = await ctx.decodeAudioData(buf.slice(0));
+  return { ctx, audioBuf };
 }
 
-function analyzeBeatsOffline(buf){
-  const channel = buf.getChannelData(0);
-  const sr = buf.sampleRate;
+function analyzeBeatsOffline(audioBuf){
+  const channel = audioBuf.getChannelData(0);
+  const sr = audioBuf.sampleRate;
   const hop = Math.floor(sr * 0.05);
   const energies = [];
   for (let i=0;i<channel.length;i+=hop){
-    let s = 0;
-    for (let j=0;j<hop && i+j<channel.length;j++){ s += channel[i+j]*channel[i+j]; }
+    let s = 0; for (let j=0;j<hop && i+j<channel.length;j++) s += channel[i+j]*channel[i+j];
     energies.push(Math.sqrt(s/hop));
   }
   const win = 20, peaks = [];
   for (let i=win;i<energies.length-win;i++){
-    let avg = 0; for (let k=i-win;k<i+win;k++) avg += energies[k]; avg /= (2*win);
-    if (energies[i] > avg * 1.35){ peaks.push((i*hop)/sr); i += 6; }
+    let avg=0; for (let k=i-win;k<i+win;k++) avg += energies[k]; avg /= (2*win);
+    if (energies[i] > avg*1.35){ peaks.push((i*hop)/sr); i+=6; }
   }
   return peaks;
 }
@@ -188,7 +189,7 @@ async function setBgImageFromSpace(shot, style, spaceUrlRaw){
       bgMesh.material.map = tx;
       bgMesh.material.needsUpdate = true;
       return true;
-    }catch(e){ }
+    }catch(e){ /* try next endpoint */ }
   }
   return false;
 }
@@ -201,50 +202,128 @@ function animateFrame(tSec, beatTimes){
   renderer.render(scene, camera);
 }
 
-async function recordCanvasWithAudio_iOS(durationSec, audioEl, mimeType){
-  const recordedChunks = [];
+function startRenderLoop(duration, beatTimes, usingSpace){
+  let startTime;
+  running = true;
+  const tick = (ts)=>{
+    if (!running) return;
+    if (!startTime) startTime = ts;
+    const tSec = (ts - startTime)/1000;
+    // Which shot?
+    const N = 12;
+    const shotIdx = Math.min(N-1, Math.floor((tSec / duration) * N));
+    const cam = ["wide","medium","close"][shotIdx % 3];
+    camera.fov = cam==="close"?35:cam==="medium"?50:65;
+    camera.updateProjectionMatrix();
+    if (!usingSpace) setBgColor(shotIdx);
+    animateFrame(tSec, beatTimes);
+    if (tSec < duration) loopRAF = requestAnimationFrame(tick);
+  };
+  loopRAF = requestAnimationFrame(tick);
+}
+
+function stopRenderLoop(){
+  running = false;
+  if (loopRAF) cancelAnimationFrame(loopRAF);
+}
+
+async function recordWithFallback(duration, audioEl){
+  if (!window.MediaRecorder){
+    throw new Error("MediaRecorder not supported on this device.");
+  }
   const stream = canvas.captureStream(30);
   const actx = new (window.AudioContext || window.webkitAudioContext)();
   if (actx.state === "suspended") await actx.resume();
-
-  const source = actx.createMediaElementSource(audioEl);
+  const src = actx.createMediaElementSource(audioEl);
   const dest = actx.createMediaStreamDestination();
-  source.connect(dest);
-  source.connect(actx.destination);
+  src.connect(dest);
+  src.connect(actx.destination);
 
+  // Merge audio+video
   const mixed = new MediaStream([...stream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
-  const opts = mimeType ? {mimeType: mimeType} : {};
-  const mr = new MediaRecorder(mixed, opts);
-  mr.ondataavailable = (e)=> { if (e.data && e.data.size) recordedChunks.push(e.data); };
-  mr.start();
-  await new Promise(r => setTimeout(r, durationSec*1000 + 700));
-  mr.stop();
-  await new Promise(r => mr.onstop = r);
 
-  const type = mimeType && mimeType.includes("mp4") ? "video/mp4" : "video/webm";
-  return new Blob(recordedChunks, {type});
+  const candidates = pickMimeCandidates();
+  // If none advertised, try empty options (let browser choose)
+  const tryList = candidates.length ? candidates : [''];
+
+  // We'll stop on audio end; also show live progress
+  const total = Math.max(1, Math.round(duration));
+  let elapsed = 0;
+  const progressTimer = setInterval(()=>{
+    elapsed++;
+    const mm = (n)=>String(Math.floor(n/60)).padStart(2,'0');
+    const ss = (n)=>String(Math.floor(n%60)).padStart(2,'0');
+    setStatus(`Rendering to video… ${mm(elapsed)}:${ss(elapsed)} / ${mm(total)}:${ss(total)}`);
+  }, 1000);
+
+  try {
+    for (let i=0;i<tryList.length;i++){
+      const type = tryList[i];
+      setStatus(`Rendering to video… (${type || 'auto'})`);
+      const chunks = [];
+      let gotData = false;
+
+      const opts = type ? {mimeType:type} : {};
+      let mr;
+      try {
+        mr = new MediaRecorder(mixed, opts);
+      } catch(e) {
+        // Try next type
+        continue;
+      }
+
+      mr.ondataavailable = (e)=>{ if (e.data && e.data.size){ chunks.push(e.data); gotData = true; } };
+      const done = new Promise((resolve)=>{ mr.onstop = resolve; });
+
+      // Stop when audio ends (more reliable on iOS)
+      const onEnded = ()=>{ try{ mr.stop(); }catch(_){} };
+      audioEl.addEventListener('ended', onEnded, {once:true});
+
+      mr.start();
+      await audioEl.play();  // must be after user gesture
+      // Safety watchdog: if for some reason 'ended' never fires (e.g., short file decode mismatch)
+      const maxMs = (duration * 1000) + 5000;
+      await Promise.race([
+        done,
+        new Promise(r=>setTimeout(r, maxMs).then(()=>{ try{ mr.stop(); }catch(_){}; }))
+      ]);
+      await done;
+
+      // Build blob if we got data
+      if (gotData && chunks.length){
+        clearInterval(progressTimer);
+        const outType = type && type.includes("mp4") ? "video/mp4" : (type || "video/webm");
+        return new Blob(chunks, {type: outType});
+      }
+      // else try next candidate
+    }
+    clearInterval(progressTimer);
+    throw new Error("No supported recording mime type produced data on this device.");
+  } finally {
+    clearInterval(progressTimer);
+  }
 }
 
 async function handleGenerate(){
   try{
     downloadEl.innerHTML = "";
-    setStatus("Preparing…");
+    stopBtn.disabled = false; genBtn.disabled = true;
 
     const file = audioEl.files?.[0];
-    if (!file){ setStatus("Please choose an audio file."); return; }
+    if (!file){ setStatus("Please choose an audio file."); stopBtn.disabled = true; genBtn.disabled = false; return; }
 
     setStatus("Loading audio…");
-    const {buf} = await readFileAudio(file);
-    const duration = buf.duration;
+    const {audioBuf} = await decodeAudio(file);
+    const duration = audioBuf.duration;
 
     setStatus("Analyzing beats…");
-    const beatTimes = analyzeBeatsOffline(buf);
+    const beatTimes = analyzeBeatsOffline(audioBuf);
 
     setStatus("Building 3D scene…");
     if (!renderer) await setupThree();
 
-    const objUrl = URL.createObjectURL(file);
-    const hiddenAudio = new Audio(objUrl);
+    const audioURL = URL.createObjectURL(file);
+    const hiddenAudio = new Audio(audioURL);
     hiddenAudio.crossOrigin = "anonymous";
     hiddenAudio.preload = "auto";
 
@@ -260,31 +339,11 @@ async function handleGenerate(){
       await new Promise(r=>setTimeout(r, 120));
     }
 
-    let startTime; running = true;
-    function loop(ts){
-      if (!running) return;
-      if (!startTime) startTime = ts;
-      const tSec = (ts - startTime)/1000;
-      let idx = 0;
-      for (let i=0;i<shots.length;i++){ if (tSec >= shots[i].start && tSec < shots[i].end){ idx = i; break; } }
-      const cam = shots[idx].camera;
-      camera.fov = cam==="close"? 35 : cam==="medium" ? 50 : 65;
-      camera.updateProjectionMatrix();
-      if (!effectiveSpace) setBgColor(idx);
-      animateFrame(tSec, beatTimes);
-      if (tSec < duration) requestAnimationFrame(loop);
-    }
-    requestAnimationFrame(loop);
+    // Render + record
+    startRenderLoop(duration, beatTimes, true);
+    const blob = await recordWithFallback(duration, hiddenAudio);
+    stopRenderLoop();
 
-    const mime = pickMimeType();
-    if (!window.MediaRecorder){ setStatus("MediaRecorder not supported on this device."); running = false; return; }
-    setStatus(`Rendering to video… (${mime || 'auto'})`);
-
-    await hiddenAudio.play();
-
-    const blob = await recordCanvasWithAudio_iOS(duration, hiddenAudio, mime);
-
-    running = false;
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -295,17 +354,20 @@ async function handleGenerate(){
     setStatus("Done ✔");
   }catch(e){
     console.error(e);
+    stopRenderLoop();
     setStatus("Error: " + (e?.message || e));
-    running = false;
+  } finally {
+    stopBtn.disabled = true; genBtn.disabled = false;
   }
 }
 
-genBtn?.addEventListener('click', handleGenerate);
-window.AMV_generate = handleGenerate;
+function handleStop(){
+  stopRenderLoop();
+  setStatus("Stopped by user");
+}
 
-stopBtn?.addEventListener('click', ()=>{
-  running = false;
-  setStatus("Stopped");
-});
+genBtn?.addEventListener('click', handleGenerate);
+window.AMV_generate = handleGenerate; // inline fallback
+stopBtn?.addEventListener('click', handleStop);
 
 setStatus(`Ready ${isiOS() ? "(iOS detected)" : ""}`);
