@@ -1,4 +1,4 @@
-// app.module.js — iPhone-safe version
+// app.module.js — robust iPhone version with global fallback
 import * as THREE from 'https://unpkg.com/three@0.161.0/build/three.module.js';
 import { FontLoader } from 'https://unpkg.com/three@0.161.0/examples/jsm/loaders/FontLoader.js';
 import { TextGeometry } from 'https://unpkg.com/three@0.161.0/examples/jsm/geometries/TextGeometry.js';
@@ -19,25 +19,31 @@ let renderer, scene, camera, singer, bgMesh;
 let running = false;
 
 function setStatus(msg){
-  statusEl.textContent = msg;
+  if (statusEl) statusEl.textContent = msg;
   console.log("[AMV]", msg);
 }
+
+// Prove module loaded
+setStatus("Module loaded ✅");
+
+// Show when a file is chosen (confirms input works)
+audioEl?.addEventListener('change', () => {
+  if (audioEl.files?.[0]) setStatus(`Audio selected: ${audioEl.files[0].name}`);
+});
 
 function isiOS(){
   return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
 function pickMimeType(){
-  // Prefer MP4 on Safari/iOS
   const mp4 = 'video/mp4;codecs="avc1.42E01E,mp4a.40.2"';
   const webm_vp9 = 'video/webm;codecs=vp9,opus';
   const webm_vp8 = 'video/webm;codecs=vp8,opus';
-
   if (window.MediaRecorder) {
-    if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(mp4)) return mp4;
-    if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(webm_vp9)) return webm_vp9;
-    if (MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(webm_vp8)) return webm_vp8;
-    return ''; // let the browser choose
+    if (MediaRecorder.isTypeSupported?.(mp4)) return mp4;
+    if (MediaRecorder.isTypeSupported?.(webm_vp9)) return webm_vp9;
+    if (MediaRecorder.isTypeSupported?.(webm_vp8)) return webm_vp8;
+    return '';
   }
   return null;
 }
@@ -112,29 +118,19 @@ function analyzeBeatsOffline(buf){
   const energies = [];
   for (let i=0;i<channel.length;i+=hop){
     let s = 0;
-    for (let j=0;j<hop && i+j<channel.length;j++){ const v = channel[i+j]; s += v*v; }
+    for (let j=0;j<hop && i+j<channel.length;j++){ s += channel[i+j]*channel[i+j]; }
     energies.push(Math.sqrt(s/hop));
   }
-  const win = 20;
-  const peaks = [];
+  const win = 20, peaks = [];
   for (let i=win;i<energies.length-win;i++){
-    let avg = 0;
-    for (let k=i-win;k<i+win;k++) avg += energies[k];
-    avg /= (2*win);
-    const e = energies[i];
-    if (e > avg * 1.35){
-      const t = (i*hop)/sr;
-      peaks.push(t);
-      i += 6;
-    }
+    let avg = 0; for (let k=i-win;k<i+win;k++) avg += energies[k]; avg /= (2*win);
+    if (energies[i] > avg * 1.35){ peaks.push((i*hop)/sr); i += 6; }
   }
   return peaks;
 }
 
 function storyboard(duration, lyrics){
-  const cams = ["wide","medium","close"];
-  const N = 12;
-  const shots = [];
+  const cams = ["wide","medium","close"], N = 12, shots = [];
   const lines = (lyrics || "").split(/\n+/).map(s=>s.trim()).filter(Boolean);
   const lower = lines.map(x=>x.toLowerCase());
   let chorusLine = "";
@@ -145,10 +141,8 @@ function storyboard(duration, lyrics){
     if (chorusLine) break;
   }
   for (let i=0;i<N;i++){
-    const start = (i/N)*duration;
-    const end   = ((i+1)/N)*duration;
-    const isChorus = (i % 3 === 1) && chorusLine;
-    const theme = isChorus ? chorusLine : (lines[i % (lines.length||1)] || "fun colorful scene");
+    const start=(i/N)*duration, end=((i+1)/N)*duration;
+    const theme = (i%3===1 && chorusLine) ? chorusLine : (lines[i%(lines.length||1)] || "fun colorful scene");
     shots.push({ id:`shot_${String(i+1).padStart(2,"0")}`, start, end, camera: cams[i%3], theme });
   }
   return shots;
@@ -177,7 +171,7 @@ async function setBgImageFromSpace(shot, style, spaceUrl){
       let b64 = null;
       if (Array.isArray(data.data)){
         if (typeof data.data[0] === "string" && data.data[0].startsWith("data:image/")) b64 = data.data[0];
-        else if (data.data[0]?.data && data.data[0].data.startsWith("data:image/")) b64 = data.data[0].data;
+        else if (data.data[0]?.data?.startsWith?.("data:image/")) b64 = data.data[0].data;
       }
       if (!b64) continue;
       const tx = await new THREE.TextureLoader().loadAsync(b64);
@@ -193,22 +187,16 @@ async function setBgImageFromSpace(shot, style, spaceUrl){
 function animateFrame(tSec, beatTimes){
   singer.rotation.y = Math.sin(tSec*0.7)*0.2;
   let bounce = 0;
-  const near = 0.12;
-  for (const bt of beatTimes){
-    if (Math.abs(bt - tSec) < near){ bounce = 0.35; break; }
-  }
+  for (const bt of beatTimes){ if (Math.abs(bt - tSec) < 0.12){ bounce = 0.35; break; } }
   singer.position.y = 1.2 + bounce;
   renderer.render(scene, camera);
 }
 
 async function recordCanvasWithAudio_iOS(durationSec, audioEl, mimeType){
-  // iOS-specific: build stream after user gesture, prefer MP4
   const recordedChunks = [];
   const stream = canvas.captureStream(30);
-
-  // Create AudioContext AFTER user gesture
   const actx = new (window.AudioContext || window.webkitAudioContext)();
-  if (actx.state === "suspended") { await actx.resume(); }
+  if (actx.state === "suspended") await actx.resume();
 
   const source = actx.createMediaElementSource(audioEl);
   const dest = actx.createMediaStreamDestination();
@@ -216,9 +204,9 @@ async function recordCanvasWithAudio_iOS(durationSec, audioEl, mimeType){
   source.connect(actx.destination);
 
   const mixed = new MediaStream([...stream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
-
   let options = {};
   if (mimeType) options.mimeType = mimeType;
+
   const mr = new MediaRecorder(mixed, options);
   mr.ondataavailable = (e)=> { if (e.data && e.data.size) recordedChunks.push(e.data); };
   mr.start();
@@ -230,30 +218,28 @@ async function recordCanvasWithAudio_iOS(durationSec, audioEl, mimeType){
   return new Blob(recordedChunks, {type});
 }
 
-genBtn.onclick = async () => {
+async function handleGenerate(){
   try{
     downloadEl.innerHTML = "";
-    setStatus("Preparing...");
+    setStatus("Preparing…");
 
     const file = audioEl.files?.[0];
     if (!file){ setStatus("Please choose an audio file."); return; }
 
-    // Decode the audio FIRST (this can be slow on mobile)
-    setStatus("Loading audio...");
+    setStatus("Loading audio…");
     const {buf} = await readFileAudio(file);
     const duration = buf.duration;
 
-    setStatus("Analyzing beats...");
+    setStatus("Analyzing beats…");
     const beatTimes = analyzeBeatsOffline(buf);
 
-    setStatus("Building 3D scene...");
+    setStatus("Building 3D scene…");
     if (!renderer) await setupThree();
 
     const objUrl = URL.createObjectURL(file);
     const hiddenAudio = new Audio(objUrl);
     hiddenAudio.crossOrigin = "anonymous";
     hiddenAudio.preload = "auto";
-    hiddenAudio.loop = false;
 
     const shots = storyboard(duration, lyricsEl.value);
     const spaceUrl = spaceEl.value.trim();
@@ -268,8 +254,7 @@ genBtn.onclick = async () => {
       }
     }
 
-    let startTime;
-    running = true;
+    let startTime; running = true;
     function loop(ts){
       if (!running) return;
       if (!startTime) startTime = ts;
@@ -285,24 +270,15 @@ genBtn.onclick = async () => {
     }
     requestAnimationFrame(loop);
 
-    // iOS requires user gesture: we are in it now; unlock audio & start
     const mime = pickMimeType();
-    if (!window.MediaRecorder){
-      setStatus("MediaRecorder is not supported on this browser/device.");
-      running = false;
-      return;
-    }
-    setStatus(`Rendering to video… (${mime || 'auto mime'})`);
+    if (!window.MediaRecorder){ setStatus("MediaRecorder not supported on this device."); running = false; return; }
+    setStatus(`Rendering to video… (${mime || 'auto'})`);
 
-    // Start playback AFTER AudioContext is allowed by gesture
     await hiddenAudio.play();
 
-    // iOS-safe recording
     const blob = await recordCanvasWithAudio_iOS(duration, hiddenAudio, mime);
 
     running = false;
-    stopBtn.disabled = true; genBtn.disabled = false;
-
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -315,14 +291,16 @@ genBtn.onclick = async () => {
     console.error(e);
     setStatus("Error: " + (e?.message || e));
     running = false;
-    stopBtn.disabled = true; genBtn.disabled = false;
   }
-};
+}
 
-stopBtn.onclick = () => {
+// Attach click handler AND expose global fallback
+genBtn?.addEventListener('click', handleGenerate);
+window.AMV_generate = handleGenerate;
+
+stopBtn?.addEventListener('click', ()=>{
   running = false;
-  stopBtn.disabled = true; genBtn.disabled = false;
   setStatus("Stopped");
-};
+});
 
 setStatus(`Ready ${isiOS() ? "(iOS detected)" : ""}`);
