@@ -1,4 +1,4 @@
-// app.module.js — robust iPhone version with global fallback
+// app.module.js — robust iPhone version with hard-coded Space + global fallback
 import * as THREE from 'https://unpkg.com/three@0.161.0/build/three.module.js';
 import { FontLoader } from 'https://unpkg.com/three@0.161.0/examples/jsm/loaders/FontLoader.js';
 import { TextGeometry } from 'https://unpkg.com/three@0.161.0/examples/jsm/geometries/TextGeometry.js';
@@ -18,15 +18,26 @@ const canvas = $("#stage");
 let renderer, scene, camera, singer, bgMesh;
 let running = false;
 
-function setStatus(msg){
-  if (statusEl) statusEl.textContent = msg;
-  console.log("[AMV]", msg);
+// ------------- Hard-coded default Space ----------------
+// You gave: https://huggingface.co/spaces/Nwt002tech/MuvidGen
+// Runtime API is usually the *.hf.space hostname:
+const DEFAULT_SPACE_HFSP = "https://nwt002tech-muvidgen.hf.space/";
+
+// Convert /spaces/{user}/{space} -> https://{user}-{space}.hf.space/
+function toHfSubdomain(u){
+  try{
+    if (!u) return DEFAULT_SPACE_HFSP;
+    const url = String(u).trim().replace(/\/+$/,'');
+    const m = url.match(/huggingface\.co\/spaces\/([^/]+)\/([^/]+)$/i);
+    if (m) return `https://${m[1]}-${m[2]}.hf.space/`;
+    return url + (url.endsWith('/') ? '' : '/');
+  }catch{ return DEFAULT_SPACE_HFSP; }
 }
 
-// Prove module loaded
+function setStatus(msg){ statusEl && (statusEl.textContent = msg); console.log("[AMV]", msg); }
 setStatus("Module loaded ✅");
 
-// Show when a file is chosen (confirms input works)
+// Show when a file is chosen
 audioEl?.addEventListener('change', () => {
   if (audioEl.files?.[0]) setStatus(`Audio selected: ${audioEl.files[0].name}`);
 });
@@ -105,6 +116,7 @@ function onResize(){
 }
 
 async function readFileAudio(file){
+  // Create AudioContext on decode call; on iOS it will be unlocked by the click
   const arrayBuf = await file.arrayBuffer();
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
   const buf = await ctx.decodeAudioData(arrayBuf.slice(0));
@@ -118,7 +130,7 @@ function analyzeBeatsOffline(buf){
   const energies = [];
   for (let i=0;i<channel.length;i+=hop){
     let s = 0;
-    for (let j=0;j<hop && i+j<channel.length;j++){ s += channel[i+j]*channel[i+j]; }
+    for (let j=0;j<hop && i+j<channel.length;j++){ const v = channel[i+j]; s += v*v; }
     energies.push(Math.sqrt(s/hop));
   }
   const win = 20, peaks = [];
@@ -156,7 +168,8 @@ function setBgColor(idx){
   bgMesh.material.needsUpdate = true;
 }
 
-async function setBgImageFromSpace(shot, style, spaceUrl){
+async function setBgImageFromSpace(shot, style, spaceUrlRaw){
+  const spaceUrl = toHfSubdomain(spaceUrlRaw || DEFAULT_SPACE_HFSP);
   const prompt = `${style}; ${shot.theme}`.slice(0, 500);
   const endpoints = ["/api/predict", "/run/predict"];
   for (const ep of endpoints){
@@ -204,10 +217,8 @@ async function recordCanvasWithAudio_iOS(durationSec, audioEl, mimeType){
   source.connect(actx.destination);
 
   const mixed = new MediaStream([...stream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
-  let options = {};
-  if (mimeType) options.mimeType = mimeType;
-
-  const mr = new MediaRecorder(mixed, options);
+  const opts = mimeType ? {mimeType: mimeType} : {};
+  const mr = new MediaRecorder(mixed, opts);
   mr.ondataavailable = (e)=> { if (e.data && e.data.size) recordedChunks.push(e.data); };
   mr.start();
   await new Promise(r => setTimeout(r, durationSec*1000 + 700));
@@ -242,16 +253,16 @@ async function handleGenerate(){
     hiddenAudio.preload = "auto";
 
     const shots = storyboard(duration, lyricsEl.value);
-    const spaceUrl = spaceEl.value.trim();
-    const style = styleEl.value.trim();
+    // hard-coded default; optional override from the input
+    const override = spaceEl?.value?.trim();
+    const effectiveSpace = toHfSubdomain(override || DEFAULT_SPACE_HFSP);
+    if (spaceEl) spaceEl.value = effectiveSpace; // show what we're using
 
-    if (spaceUrl){
-      setStatus("Generating AI backgrounds…");
-      for (let i=0;i<shots.length;i++){
-        const ok = await setBgImageFromSpace(shots[i], style, spaceUrl);
-        if (!ok) setBgColor(i);
-        await new Promise(r=>setTimeout(r, 150));
-      }
+    setStatus("Generating AI backgrounds…");
+    for (let i=0;i<shots.length;i++){
+      const ok = await setBgImageFromSpace(shots[i], styleEl.value.trim(), effectiveSpace);
+      if (!ok) setBgColor(i);
+      await new Promise(r=>setTimeout(r, 120));
     }
 
     let startTime; running = true;
@@ -264,7 +275,7 @@ async function handleGenerate(){
       const cam = shots[idx].camera;
       camera.fov = cam==="close"? 35 : cam==="medium" ? 50 : 65;
       camera.updateProjectionMatrix();
-      if (!spaceUrl) setBgColor(idx);
+      if (!effectiveSpace) setBgColor(idx);
       animateFrame(tSec, beatTimes);
       if (tSec < duration) requestAnimationFrame(loop);
     }
