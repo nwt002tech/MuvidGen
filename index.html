@@ -29,7 +29,8 @@
         <input id="space" placeholder="https://your-username-your-space.hf.space"/>
         <small>Public CPU Space is fine. Must accept POST /api/predict or /run/predict with a text prompt and return an image.</small>
         <div class="btns">
-          <button id="genBtn">Generate Full Video</button>
+          <!-- Fallback onclick calls window.AMV_generate -->
+          <button id="genBtn" onclick="window.AMV_generate && window.AMV_generate()">Generate Full Video</button>
           <button id="stopBtn" disabled>Stop</button>
         </div>
         <div class="status" id="status">Idle</div>
@@ -47,7 +48,15 @@
     </footer>
   </div>
 
-  <!-- Use the ES module version of the app -->
+  <!-- Tiny inline sanity check (should flip "Idle" → "Page JS loaded") -->
+  <script>
+    (function(){
+      var s = document.getElementById('status');
+      if (s) s.textContent = 'Page JS loaded (waiting for module)…';
+    }());
+  </script>
+
+  <!-- ES module app -->
   <script type="module" src="app.module.js"></script>
 </body>
 </html>
