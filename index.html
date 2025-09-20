@@ -26,8 +26,7 @@
         <label>Audio (WAV/MP3)</label>
         <input id="audio" type="file" accept=".wav,.mp3"/>
 
-        <!-- Space URL field is optional now; we hard-code a default in the JS.
-             You can still override by typing a different URL here. -->
+        <!-- Optional override of Hugging Face Space URL -->
         <label>Hugging Face Space URL (optional override)</label>
         <input id="space" placeholder="https://huggingface.co/spaces/Nwt002tech/MuvidGen"/>
 
@@ -51,13 +50,21 @@
     </footer>
   </div>
 
-  <!-- Bootloader: dynamic import with visible error reporting -->
+  <!-- Import map: makes bare "three" specifier resolve -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.161.0/build/three.module.js"
+    }
+  }
+  </script>
+
+  <!-- Bootloader: dynamic import with error reporting -->
   <script>
   (async function(){
     const s = document.getElementById('status');
     try {
-      const url = new URL('app.module.js', location.href).toString();
-      await import(url);
+      await import('./app.module.js');
       s.textContent = 'Module imported ✅';
     } catch (e) {
       console.error(e);
