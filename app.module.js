@@ -1,5 +1,5 @@
-// app.module.js — robust iPhone version with hard-coded Space + global fallback
-import * as THREE from 'https://unpkg.com/three@0.161.0/build/three.module.js';
+// app.module.js — iPhone-safe version with hard-coded HF Space + importmap for THREE
+import * as THREE from 'three';
 import { FontLoader } from 'https://unpkg.com/three@0.161.0/examples/jsm/loaders/FontLoader.js';
 import { TextGeometry } from 'https://unpkg.com/three@0.161.0/examples/jsm/geometries/TextGeometry.js';
 
@@ -18,9 +18,7 @@ const canvas = $("#stage");
 let renderer, scene, camera, singer, bgMesh;
 let running = false;
 
-// ------------- Hard-coded default Space ----------------
-// You gave: https://huggingface.co/spaces/Nwt002tech/MuvidGen
-// Runtime API is usually the *.hf.space hostname:
+// --- Default Space ---
 const DEFAULT_SPACE_HFSP = "https://nwt002tech-muvidgen.hf.space/";
 
 // Convert /spaces/{user}/{space} -> https://{user}-{space}.hf.space/
@@ -34,10 +32,9 @@ function toHfSubdomain(u){
   }catch{ return DEFAULT_SPACE_HFSP; }
 }
 
-function setStatus(msg){ statusEl && (statusEl.textContent = msg); console.log("[AMV]", msg); }
+function setStatus(msg){ statusEl.textContent = msg; console.log("[AMV]", msg); }
 setStatus("Module loaded ✅");
 
-// Show when a file is chosen
 audioEl?.addEventListener('change', () => {
   if (audioEl.files?.[0]) setStatus(`Audio selected: ${audioEl.files[0].name}`);
 });
@@ -116,7 +113,6 @@ function onResize(){
 }
 
 async function readFileAudio(file){
-  // Create AudioContext on decode call; on iOS it will be unlocked by the click
   const arrayBuf = await file.arrayBuffer();
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
   const buf = await ctx.decodeAudioData(arrayBuf.slice(0));
@@ -130,7 +126,7 @@ function analyzeBeatsOffline(buf){
   const energies = [];
   for (let i=0;i<channel.length;i+=hop){
     let s = 0;
-    for (let j=0;j<hop && i+j<channel.length;j++){ const v = channel[i+j]; s += v*v; }
+    for (let j=0;j<hop && i+j<channel.length;j++){ s += channel[i+j]*channel[i+j]; }
     energies.push(Math.sqrt(s/hop));
   }
   const win = 20, peaks = [];
@@ -192,7 +188,7 @@ async function setBgImageFromSpace(shot, style, spaceUrlRaw){
       bgMesh.material.map = tx;
       bgMesh.material.needsUpdate = true;
       return true;
-    }catch(e){ /* try next endpoint */ }
+    }catch(e){ }
   }
   return false;
 }
@@ -253,10 +249,9 @@ async function handleGenerate(){
     hiddenAudio.preload = "auto";
 
     const shots = storyboard(duration, lyricsEl.value);
-    // hard-coded default; optional override from the input
     const override = spaceEl?.value?.trim();
     const effectiveSpace = toHfSubdomain(override || DEFAULT_SPACE_HFSP);
-    if (spaceEl) spaceEl.value = effectiveSpace; // show what we're using
+    if (spaceEl) spaceEl.value = effectiveSpace;
 
     setStatus("Generating AI backgrounds…");
     for (let i=0;i<shots.length;i++){
@@ -305,7 +300,6 @@ async function handleGenerate(){
   }
 }
 
-// Attach click handler AND expose global fallback
 genBtn?.addEventListener('click', handleGenerate);
 window.AMV_generate = handleGenerate;
 
