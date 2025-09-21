@@ -1,7 +1,7 @@
-// app.module.js — iPhone-safe recorder with progress, audio-ended stop, and codec fallback
+// app.module.js — local-module build with progress + iOS-safe recording
 import * as THREE from 'three';
-import { FontLoader } from 'https://unpkg.com/three@0.161.0/examples/jsm/loaders/FontLoader.js';
-import { TextGeometry } from 'https://unpkg.com/three@0.161.0/examples/jsm/geometries/TextGeometry.js';
+import { FontLoader } from './vendor/three/examples/jsm/loaders/FontLoader.js';
+import { TextGeometry } from './vendor/three/examples/jsm/geometries/TextGeometry.js';
 
 const $ = (sel) => document.querySelector(sel);
 const titleEl = $("#title");
@@ -16,11 +16,14 @@ const downloadEl = $("#download");
 const canvas = $("#stage");
 
 let renderer, scene, camera, singer, bgMesh;
-let running = false;
-let loopRAF = 0;
+let running = false, loopRAF = 0, progressTimer = 0;
 
+// Hard-coded default Space (you can still override in the input)
 const DEFAULT_SPACE_HFSP = "https://nwt002tech-muvidgen.hf.space/";
 
+function setStatus(msg){ statusEl.textContent = msg; console.log("[AMV]", msg); }
+
+// Convert /spaces/{user}/{space} -> https://{user}-{space}.hf.space/
 function toHfSubdomain(u){
   try{
     if (!u) return DEFAULT_SPACE_HFSP;
@@ -31,23 +34,12 @@ function toHfSubdomain(u){
   }catch{ return DEFAULT_SPACE_HFSP; }
 }
 
-function setStatus(msg){
-  statusEl.textContent = msg;
-  // console.log for debug if you need it:
-  console.log("[AMV]", msg);
-}
-setStatus("Module loaded ✅");
-
-audioEl?.addEventListener('change', () => {
-  if (audioEl.files?.[0]) setStatus(`Audio selected: ${audioEl.files[0].name}`);
-});
-
 function isiOS(){
-  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
 function pickMimeCandidates(){
-  // Try MP4 first for iOS, then WebM variants
   const c = [
     'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
     'video/webm;codecs=vp9,opus',
@@ -57,16 +49,23 @@ function pickMimeCandidates(){
   return c.filter(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported?.(t));
 }
 
-async function setupThree() {
+function onResize(){
+  const w = canvas.clientWidth || canvas.parentElement?.clientWidth || 640;
+  const h = canvas.clientHeight || Math.max(360, Math.floor(w * 9/16));
+  renderer?.setSize(w, h, false);
+  if (camera){ camera.aspect = w/h; camera.updateProjectionMatrix(); }
+}
+
+async function setupThree(){
   renderer = new THREE.WebGLRenderer({canvas, preserveDrawingBuffer: true});
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   onResize();
   window.addEventListener('resize', onResize);
 
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(60, canvas.clientWidth/canvas.clientHeight, 0.1, 100);
-  camera.position.set(0, 6, 10);
-  camera.lookAt(0, 1.5, 0);
+  camera = new THREE.PerspectiveCamera(60, 16/9, 0.1, 100);
+  camera.position.set(0,6,10);
+  camera.lookAt(0,1.5,0);
   scene.add(camera);
 
   const hemi = new THREE.HemisphereLight(0xffffff, 0x223355, 1.0);
@@ -75,64 +74,60 @@ async function setupThree() {
   dir.position.set(3,4,2);
   scene.add(dir);
 
-  const stageGeo = new THREE.PlaneGeometry(30, 20);
-  const stageMat = new THREE.MeshStandardMaterial({color: 0x0f1522, metalness: 0.1, roughness: 0.8});
-  const stage = new THREE.Mesh(stageGeo, stageMat);
+  const stage = new THREE.Mesh(
+    new THREE.PlaneGeometry(30,20),
+    new THREE.MeshStandardMaterial({color:0x0f1522, metalness:0.1, roughness:0.8})
+  );
   stage.rotation.x = -Math.PI/2;
-  stage.position.y = 0;
   scene.add(stage);
 
-  const bgGeo = new THREE.PlaneGeometry(40, 22);
-  const bgMat = new THREE.MeshBasicMaterial({color: 0x1b2850});
-  bgMesh = new THREE.Mesh(bgGeo, bgMat);
-  bgMesh.position.set(0, 10, -10);
+  bgMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(40,22),
+    new THREE.MeshBasicMaterial({color:0x1b2850})
+  );
+  bgMesh.position.set(0,10,-10);
   scene.add(bgMesh);
 
-  const font = await new Promise((res, rej) => {
-    new FontLoader().load(
-      "https://unpkg.com/three@0.161.0/examples/fonts/helvetiker_regular.typeface.json",
-      res, undefined, rej
-    );
+  // Local font file
+  const font = await new Promise((res, rej)=>{
+    new FontLoader().load('./vendor/three/examples/fonts/helvetiker_regular.typeface.json', res, undefined, rej);
   });
 
   const textGeo = new TextGeometry("A", {
-    font, size: 1.6, height: 0.35,
-    curveSegments: 8, bevelEnabled: true, bevelThickness: 0.04, bevelSize: 0.03
+    font, size:1.6, height:0.35,
+    curveSegments:8, bevelEnabled:true, bevelThickness:0.04, bevelSize:0.03
   });
   textGeo.center();
-  const textMat = new THREE.MeshStandardMaterial({color: 0x1ecb63, metalness: 0.3, roughness: 0.35});
-  singer = new THREE.Mesh(textGeo, textMat);
+  singer = new THREE.Mesh(
+    textGeo,
+    new THREE.MeshStandardMaterial({color:0x1ecb63, metalness:0.3, roughness:0.35})
+  );
   singer.position.y = 1.2;
   scene.add(singer);
-}
 
-function onResize(){
-  const w = canvas.clientWidth;
-  const h = canvas.clientHeight;
-  renderer?.setSize(w, h, false);
-  if (camera){ camera.aspect = w/h; camera.updateProjectionMatrix(); }
+  setStatus("3D ready ✅");
 }
 
 async function decodeAudio(file){
   const buf = await file.arrayBuffer();
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
   if (ctx.state === 'suspended') await ctx.resume();
-  const audioBuf = await ctx.decodeAudioData(buf.slice(0));
+  const audioBuf = await new Promise((res, rej)=> ctx.decodeAudioData(buf.slice(0), res, rej));
   return { ctx, audioBuf };
 }
 
 function analyzeBeatsOffline(audioBuf){
-  const channel = audioBuf.getChannelData(0);
+  const ch = audioBuf.getChannelData(0);
   const sr = audioBuf.sampleRate;
   const hop = Math.floor(sr * 0.05);
   const energies = [];
-  for (let i=0;i<channel.length;i+=hop){
-    let s = 0; for (let j=0;j<hop && i+j<channel.length;j++) s += channel[i+j]*channel[i+j];
+  for (let i=0;i<ch.length;i+=hop){
+    let s=0; for (let j=0;j<hop && i+j<ch.length;j++) s += ch[i+j]*ch[i+j];
     energies.push(Math.sqrt(s/hop));
   }
   const win = 20, peaks = [];
   for (let i=win;i<energies.length-win;i++){
-    let avg=0; for (let k=i-win;k<i+win;k++) avg += energies[k]; avg /= (2*win);
+    let avg=0; for (let k=i-win;k<i+win;k++) avg += energies[k]; avg/=(2*win);
     if (energies[i] > avg*1.35){ peaks.push((i*hop)/sr); i+=6; }
   }
   return peaks;
@@ -142,17 +137,17 @@ function storyboard(duration, lyrics){
   const cams = ["wide","medium","close"], N = 12, shots = [];
   const lines = (lyrics || "").split(/\n+/).map(s=>s.trim()).filter(Boolean);
   const lower = lines.map(x=>x.toLowerCase());
-  let chorusLine = "";
+  let chorus = "";
   for (let i=0;i<lower.length;i++){
     for (let j=i+1;j<lower.length;j++){
-      if (lower[i] && lower[i] === lower[j] && lower[i].length >= 8){ chorusLine = lines[i]; break; }
+      if (lower[i] && lower[i] === lower[j] && lower[i].length >= 8){ chorus = lines[i]; break; }
     }
-    if (chorusLine) break;
+    if (chorus) break;
   }
   for (let i=0;i<N;i++){
     const start=(i/N)*duration, end=((i+1)/N)*duration;
-    const theme = (i%3===1 && chorusLine) ? chorusLine : (lines[i%(lines.length||1)] || "fun colorful scene");
-    shots.push({ id:`shot_${String(i+1).padStart(2,"0")}`, start, end, camera: cams[i%3], theme });
+    const theme = (i%3===1 && chorus) ? chorus : (lines[i%(lines.length||1)] || "fun colorful scene");
+    shots.push({start,end,camera:cams[i%3],theme: theme});
   }
   return shots;
 }
@@ -165,16 +160,16 @@ function setBgColor(idx){
   bgMesh.material.needsUpdate = true;
 }
 
-async function setBgImageFromSpace(shot, style, spaceUrlRaw){
+async function setBgImageFromSpace(theme, style, spaceUrlRaw){
   const spaceUrl = toHfSubdomain(spaceUrlRaw || DEFAULT_SPACE_HFSP);
-  const prompt = `${style}; ${shot.theme}`.slice(0, 500);
+  const prompt = (`${style}; ${theme}`).slice(0, 500);
   const endpoints = ["/api/predict", "/run/predict"];
   for (const ep of endpoints){
     try{
       const res = await fetch(spaceUrl.replace(/\/$/,"") + ep, {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({data: [prompt]})
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({data:[prompt]})
       });
       if (!res.ok) continue;
       const data = await res.json();
@@ -194,44 +189,38 @@ async function setBgImageFromSpace(shot, style, spaceUrlRaw){
   return false;
 }
 
-function animateFrame(tSec, beatTimes){
+function animateFrame(tSec, beats){
   singer.rotation.y = Math.sin(tSec*0.7)*0.2;
-  let bounce = 0;
-  for (const bt of beatTimes){ if (Math.abs(bt - tSec) < 0.12){ bounce = 0.35; break; } }
+  let bounce=0;
+  for (const bt of beats){ if (Math.abs(bt - tSec) < 0.12){ bounce = 0.35; break; } }
   singer.position.y = 1.2 + bounce;
   renderer.render(scene, camera);
 }
 
-function startRenderLoop(duration, beatTimes, usingSpace){
-  let startTime;
+function startLoop(duration, beats, usingSpace){
+  let startTs;
   running = true;
+  const N = 12;
   const tick = (ts)=>{
     if (!running) return;
-    if (!startTime) startTime = ts;
-    const tSec = (ts - startTime)/1000;
-    // Which shot?
-    const N = 12;
-    const shotIdx = Math.min(N-1, Math.floor((tSec / duration) * N));
-    const cam = ["wide","medium","close"][shotIdx % 3];
-    camera.fov = cam==="close"?35:cam==="medium"?50:65;
+    if (!startTs) startTs = ts;
+    const tSec = (ts - startTs)/1000;
+    const idx = Math.min(N-1, Math.floor((tSec/duration)*N));
+    const cam = ["wide","medium","close"][idx%3];
+    camera.fov = cam==="close"?35 : cam==="medium"?50 : 65;
     camera.updateProjectionMatrix();
-    if (!usingSpace) setBgColor(shotIdx);
-    animateFrame(tSec, beatTimes);
+    if (!usingSpace) setBgColor(idx);
+    animateFrame(tSec, beats);
     if (tSec < duration) loopRAF = requestAnimationFrame(tick);
   };
   loopRAF = requestAnimationFrame(tick);
 }
-
-function stopRenderLoop(){
-  running = false;
-  if (loopRAF) cancelAnimationFrame(loopRAF);
-}
+function stopLoop(){ running=false; if (loopRAF) cancelAnimationFrame(loopRAF); }
 
 async function recordWithFallback(duration, audioEl){
-  if (!window.MediaRecorder){
-    throw new Error("MediaRecorder not supported on this device.");
-  }
+  if (!window.MediaRecorder) throw new Error("MediaRecorder not supported on this device.");
   const stream = canvas.captureStream(30);
+
   const actx = new (window.AudioContext || window.webkitAudioContext)();
   if (actx.state === "suspended") await actx.resume();
   const src = actx.createMediaElementSource(audioEl);
@@ -239,17 +228,13 @@ async function recordWithFallback(duration, audioEl){
   src.connect(dest);
   src.connect(actx.destination);
 
-  // Merge audio+video
   const mixed = new MediaStream([...stream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+  const types = pickMimeCandidates();
+  const tryList = types.length ? types : [''];
 
-  const candidates = pickMimeCandidates();
-  // If none advertised, try empty options (let browser choose)
-  const tryList = candidates.length ? candidates : [''];
-
-  // We'll stop on audio end; also show live progress
   const total = Math.max(1, Math.round(duration));
   let elapsed = 0;
-  const progressTimer = setInterval(()=>{
+  progressTimer = setInterval(()=>{
     elapsed++;
     const mm = (n)=>String(Math.floor(n/60)).padStart(2,'0');
     const ss = (n)=>String(Math.floor(n%60)).padStart(2,'0');
@@ -257,45 +242,35 @@ async function recordWithFallback(duration, audioEl){
   }, 1000);
 
   try {
-    for (let i=0;i<tryList.length;i++){
-      const type = tryList[i];
+    for (const type of tryList){
       setStatus(`Rendering to video… (${type || 'auto'})`);
       const chunks = [];
       let gotData = false;
-
-      const opts = type ? {mimeType:type} : {};
       let mr;
-      try {
-        mr = new MediaRecorder(mixed, opts);
-      } catch(e) {
-        // Try next type
-        continue;
-      }
+      try { mr = new MediaRecorder(mixed, type ? {mimeType:type} : {}); }
+      catch(e){ continue; }
 
-      mr.ondataavailable = (e)=>{ if (e.data && e.data.size){ chunks.push(e.data); gotData = true; } };
+      mr.ondataavailable = (e)=>{ if (e.data && e.data.size){ chunks.push(e.data); gotData=true; } };
       const done = new Promise((resolve)=>{ mr.onstop = resolve; });
 
-      // Stop when audio ends (more reliable on iOS)
       const onEnded = ()=>{ try{ mr.stop(); }catch(_){} };
       audioEl.addEventListener('ended', onEnded, {once:true});
 
       mr.start();
-      await audioEl.play();  // must be after user gesture
-      // Safety watchdog: if for some reason 'ended' never fires (e.g., short file decode mismatch)
-      const maxMs = (duration * 1000) + 5000;
+      await audioEl.play();
+
+      const maxMs = duration*1000 + 5000;
       await Promise.race([
         done,
-        new Promise(r=>setTimeout(r, maxMs).then(()=>{ try{ mr.stop(); }catch(_){}; }))
+        new Promise(r=>setTimeout(r, maxMs).then(()=>{ try{ mr.stop(); }catch(_){ } }))
       ]);
       await done;
 
-      // Build blob if we got data
       if (gotData && chunks.length){
         clearInterval(progressTimer);
         const outType = type && type.includes("mp4") ? "video/mp4" : (type || "video/webm");
         return new Blob(chunks, {type: outType});
       }
-      // else try next candidate
     }
     clearInterval(progressTimer);
     throw new Error("No supported recording mime type produced data on this device.");
@@ -304,6 +279,7 @@ async function recordWithFallback(duration, audioEl){
   }
 }
 
+// Main handler
 async function handleGenerate(){
   try{
     downloadEl.innerHTML = "";
@@ -312,37 +288,35 @@ async function handleGenerate(){
     const file = audioEl.files?.[0];
     if (!file){ setStatus("Please choose an audio file."); stopBtn.disabled = true; genBtn.disabled = false; return; }
 
-    setStatus("Loading audio…");
+    setStatus("Decoding audio…");
     const {audioBuf} = await decodeAudio(file);
     const duration = audioBuf.duration;
 
     setStatus("Analyzing beats…");
-    const beatTimes = analyzeBeatsOffline(audioBuf);
+    const beats = analyzeBeatsOffline(audioBuf);
 
     setStatus("Building 3D scene…");
     if (!renderer) await setupThree();
+
+    const shots = storyboard(duration, lyricsEl.value);
+    const effSpace = toHfSubdomain(spaceEl?.value?.trim() || DEFAULT_SPACE_HFSP);
+    if (spaceEl) spaceEl.value = effSpace;
+
+    setStatus("Generating AI backgrounds…");
+    for (let i=0;i<shots.length;i++){
+      const ok = await setBgImageFromSpace(shots[i].theme, styleEl.value.trim(), effSpace);
+      if (!ok) setBgColor(i);
+      await new Promise(r=>setTimeout(r, 120));
+    }
 
     const audioURL = URL.createObjectURL(file);
     const hiddenAudio = new Audio(audioURL);
     hiddenAudio.crossOrigin = "anonymous";
     hiddenAudio.preload = "auto";
 
-    const shots = storyboard(duration, lyricsEl.value);
-    const override = spaceEl?.value?.trim();
-    const effectiveSpace = toHfSubdomain(override || DEFAULT_SPACE_HFSP);
-    if (spaceEl) spaceEl.value = effectiveSpace;
-
-    setStatus("Generating AI backgrounds…");
-    for (let i=0;i<shots.length;i++){
-      const ok = await setBgImageFromSpace(shots[i], styleEl.value.trim(), effectiveSpace);
-      if (!ok) setBgColor(i);
-      await new Promise(r=>setTimeout(r, 120));
-    }
-
-    // Render + record
-    startRenderLoop(duration, beatTimes, true);
+    startLoop(duration, beats, true);
     const blob = await recordWithFallback(duration, hiddenAudio);
-    stopRenderLoop();
+    stopLoop();
 
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -351,10 +325,10 @@ async function handleGenerate(){
     a.textContent = "Download your video";
     downloadEl.innerHTML = "";
     downloadEl.appendChild(a);
-    setStatus("Done ✔");
+    setStatus("Done ✔  (Long-press on iPhone to save)");
   }catch(e){
     console.error(e);
-    stopRenderLoop();
+    stopLoop();
     setStatus("Error: " + (e?.message || e));
   } finally {
     stopBtn.disabled = true; genBtn.disabled = false;
@@ -362,12 +336,12 @@ async function handleGenerate(){
 }
 
 function handleStop(){
-  stopRenderLoop();
+  stopLoop();
   setStatus("Stopped by user");
 }
 
 genBtn?.addEventListener('click', handleGenerate);
-window.AMV_generate = handleGenerate; // inline fallback
+window.AMV_generate = handleGenerate;        // fallback inline onclick
 stopBtn?.addEventListener('click', handleStop);
 
-setStatus(`Ready ${isiOS() ? "(iOS detected)" : ""}`);
+setStatus(`Module loaded ✅ ${isiOS()? "(iOS detected)" : ""}`);
