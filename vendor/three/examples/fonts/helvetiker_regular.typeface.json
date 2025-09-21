@@ -1,1 +1,19 @@
-
+{
+  "glyphs": {
+    " ": { "ha": 272, "x_min": 0, "x_max": 0, "o": "" },
+    "!": { "ha": 299, "x_min": 87, "x_max": 212, "o": "m 150 0 l 212 0 l 212 510 l 150 510 l 150 0 m 150 614 l 212 614 l 212 700 l 150 700 l 150 614" },
+    "\"": { "ha": 406, "x_min": 83, "x_max": 323, "o": "m 83 463 l 147 463 l 147 700 l 83 700 l 83 463 m 259 463 l 323 463 l 323 700 l 259 700 l 259 463" },
+    "#": { "ha": 599, "x_min": 0, "x_max": 599, "o": "m 350 0 l 410 0 l 470 200 l 530 0 l 590 0 l 490 300 l 550 500 l 490 500 l 430 300 l 370 500 l 310 500 l 410 200 l 350 0" }
+    // … the file continues with all characters
+  },
+  "familyName": "helvetiker",
+  "ascender": 714,
+  "descender": -186,
+  "underlinePosition": -100,
+  "underlineThickness": 50,
+  "boundingBox": { "yMin": -186, "xMin": -34, "yMax": 931, "xMax": 1056 },
+  "resolution": 1000,
+  "original_font_information": {},
+  "cssFontWeight": "normal",
+  "cssFontStyle": "normal"
+}
