@@ -18,25 +18,19 @@ const canvas = $("#stage");
 let renderer, scene, camera, singer, bgMesh;
 let running = false, loopRAF = 0, progressTimer = 0;
 
-// Hard-coded default Space (you can still override in the input)
+// Hard-coded default Space (still overridable in input)
 const DEFAULT_SPACE_HFSP = "https://nwt002tech-muvidgen.hf.space/";
 
 function setStatus(msg){ statusEl.textContent = msg; console.log("[AMV]", msg); }
 
-// Convert /spaces/{user}/{space} -> https://{user}-{space}.hf.space/
 function toHfSubdomain(u){
   try{
     if (!u) return DEFAULT_SPACE_HFSP;
     const url = String(u).trim().replace(/\/+$/,'');
-    const m = url.match(/huggingface\.co\/spaces\/([^/]+)\/([^/]+)$/i);
+    const m = url.match(/huggingface\\.co\\/spaces\\/([^\\/]+)\\/([^\\/]+)$/i);
     if (m) return `https://${m[1]}-${m[2]}.hf.space/`;
     return url + (url.endsWith('/') ? '' : '/');
   }catch{ return DEFAULT_SPACE_HFSP; }
-}
-
-function isiOS(){
-  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
 function pickMimeCandidates(){
@@ -88,14 +82,14 @@ async function setupThree(){
   bgMesh.position.set(0,10,-10);
   scene.add(bgMesh);
 
-  // Local font file
-  const font = await new Promise((res, rej)=>{
-    new FontLoader().load('./vendor/three/examples/fonts/helvetiker_regular.typeface.json', res, undefined, rej);
-  });
+  // Local font (examples/fonts/*)
+  const fontJSON = await fetch('./vendor/three/examples/fonts/helvetiker_regular.typeface.json').then(r=>r.json());
+  const loader = new FontLoader();
+  const font = loader.parse(fontJSON);
 
   const textGeo = new TextGeometry("A", {
-    font, size:1.6, height:0.35,
-    curveSegments:8, bevelEnabled:true, bevelThickness:0.04, bevelSize:0.03
+    font, size:1.6, height:0.35, curveSegments:8,
+    bevelEnabled:true, bevelThickness:0.04, bevelSize:0.03
   });
   textGeo.center();
   singer = new THREE.Mesh(
@@ -147,7 +141,7 @@ function storyboard(duration, lyrics){
   for (let i=0;i<N;i++){
     const start=(i/N)*duration, end=((i+1)/N)*duration;
     const theme = (i%3===1 && chorus) ? chorus : (lines[i%(lines.length||1)] || "fun colorful scene");
-    shots.push({start,end,camera:cams[i%3],theme: theme});
+    shots.push({start,end,camera:cams[i%3],theme});
   }
   return shots;
 }
@@ -184,7 +178,7 @@ async function setBgImageFromSpace(theme, style, spaceUrlRaw){
       bgMesh.material.map = tx;
       bgMesh.material.needsUpdate = true;
       return true;
-    }catch(e){ /* try next endpoint */ }
+    }catch(e){ /* try next */ }
   }
   return false;
 }
@@ -198,8 +192,7 @@ function animateFrame(tSec, beats){
 }
 
 function startLoop(duration, beats, usingSpace){
-  let startTs;
-  running = true;
+  let startTs; running = true;
   const N = 12;
   const tick = (ts)=>{
     if (!running) return;
@@ -225,8 +218,7 @@ async function recordWithFallback(duration, audioEl){
   if (actx.state === "suspended") await actx.resume();
   const src = actx.createMediaElementSource(audioEl);
   const dest = actx.createMediaStreamDestination();
-  src.connect(dest);
-  src.connect(actx.destination);
+  src.connect(dest); src.connect(actx.destination);
 
   const mixed = new MediaStream([...stream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
   const types = pickMimeCandidates();
@@ -279,7 +271,6 @@ async function recordWithFallback(duration, audioEl){
   }
 }
 
-// Main handler
 async function handleGenerate(){
   try{
     downloadEl.innerHTML = "";
@@ -341,7 +332,7 @@ function handleStop(){
 }
 
 genBtn?.addEventListener('click', handleGenerate);
-window.AMV_generate = handleGenerate;        // fallback inline onclick
+window.AMV_generate = handleGenerate;        // inline fallback for onclick
 stopBtn?.addEventListener('click', handleStop);
 
-setStatus(`Module loaded ✅ ${isiOS()? "(iOS detected)" : ""}`);
+setStatus("Module loaded ✅");
