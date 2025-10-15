@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Auto 3D AMV — Local Modules</title>
+  <title>Auto 3D AMV — Local Modules (No Import Map)</title>
   <link rel="stylesheet" href="./styles.css"/>
   <style>
     body { margin:0; font-family: ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif; background:#0b0f19; color:#e6eefc; }
@@ -20,15 +20,16 @@
     .status { margin-top:8px; color:#9ed0ff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     .download a { color:#7ee787; font-weight:600; }
     .stage { margin-top: 12px; background:#050a16; border:1px solid #22314f; border-radius:12px; padding:10px; }
-    canvas#stage { width:100%; height:52vh; display:block; }
+    canvas#stage { width:100%; height:52vh; display:block; background:#000; }
     footer small { color:#7a8fb6; }
+    pre#log { white-space:pre-wrap;background:#081022;color:#9ed0ff;padding:8px;border-radius:8px;min-height:60px;margin-top:10px }
   </style>
 </head>
 <body>
   <div class="wrap">
     <header>
       <h1>🎬 Auto 3D AMV — Local Modules</h1>
-      <p>No CDNs; all scripts are local under /static.</p>
+      <p>No CDNs; all scripts are local under /static. No import map.</p>
     </header>
 
     <section class="controls">
@@ -49,7 +50,7 @@
           <button id="genBtn" onclick="window.AMV_generate && window.AMV_generate()">Generate Full Video</button>
           <button id="stopBtn" disabled>Stop</button>
         </div>
-        <div class="status" id="status">Page loaded (static)…</div>
+        <div class="status" id="status">Page loaded (static, no import map)…</div>
         <div class="download" id="download"></div>
       </div>
     </section>
@@ -58,32 +59,39 @@
       <canvas id="stage"></canvas>
     </section>
 
+    <section>
+      <pre id="log"></pre>
+    </section>
+
     <footer>
       <small>Defaults to https://nwt002tech-muvidgen.hf.space/ (you can override above)</small>
     </footer>
   </div>
 
-  <!-- Import map resolves "three" to your *local* module under /static/vendor/... -->
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "./vendor/three/build/three.module.js"
-    }
-  }
+  <!-- Show any JS errors right on the page -->
+  <script>
+    (function(){
+      const logEl = document.getElementById('log');
+      const statusEl = document.getElementById('status');
+      function say(m){ logEl.textContent += m + "\\n"; console.log(m); }
+      window.addEventListener('error', e => { statusEl.textContent = "❌ Script error: " + (e.message||e.type); say((e.filename||"") + ":" + (e.lineno||"") ); });
+      window.addEventListener('unhandledrejection', e => { statusEl.textContent = "❌ Promise error: " + (e.reason && e.reason.message ? e.reason.message : e.reason); });
+      say("Boot starting…");
+    }());
   </script>
 
-  <!-- Bootloader: imports your module -->
-  <script>
-  (async function(){
-    const s = document.getElementById('status');
-    try {
-      await import('./app.module.js');
-      s.textContent = 'Module imported ✅';
-    } catch (e) {
-      console.error(e);
-      s.textContent = 'Module import error: ' + (e && e.message ? e.message : e);
-    }
-  }());
+  <!-- Load our app module -->
+  <script type="module">
+    (async () => {
+      const statusEl = document.getElementById('status');
+      try {
+        await import('./app.module.js');
+        statusEl.textContent = 'Module imported ✅';
+      } catch (e) {
+        console.error(e);
+        statusEl.textContent = 'Module import error: ' + (e && e.message ? e.message : e);
+      }
+    })();
   </script>
 </body>
 </html>

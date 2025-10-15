@@ -1,5 +1,5 @@
-// app.module.js — local-module build with progress + iOS-safe recording
-import * as THREE from 'three';
+// IMPORTANT: direct file imports (no import map)
+import * as THREE from './vendor/three/build/three.module.js';
 import { FontLoader } from './vendor/three/examples/jsm/loaders/FontLoader.js';
 import { TextGeometry } from './vendor/three/examples/jsm/geometries/TextGeometry.js';
 
@@ -14,20 +14,21 @@ const stopBtn = $("#stopBtn");
 const statusEl = $("#status");
 const downloadEl = $("#download");
 const canvas = $("#stage");
+const logEl = $("#log");
 
 let renderer, scene, camera, singer, bgMesh;
 let running = false, loopRAF = 0, progressTimer = 0;
 
-// Hard-coded default Space (still overridable in input)
 const DEFAULT_SPACE_HFSP = "https://nwt002tech-muvidgen.hf.space/";
 
-function setStatus(msg){ statusEl.textContent = msg; console.log("[AMV]", msg); }
+function say(msg){ console.log("[AMV]", msg); if (logEl) logEl.textContent += msg + "\n"; }
+function setStatus(msg){ statusEl.textContent = msg; say(msg); }
 
 function toHfSubdomain(u){
   try{
     if (!u) return DEFAULT_SPACE_HFSP;
     const url = String(u).trim().replace(/\/+$/,'');
-    const m = url.match(/huggingface\\.co\\/spaces\\/([^\\/]+)\\/([^\\/]+)$/i);
+    const m = url.match(/huggingface\.co\/spaces\/([^/]+)\/([^/]+)$/i);
     if (m) return `https://${m[1]}-${m[2]}.hf.space/`;
     return url + (url.endsWith('/') ? '' : '/');
   }catch{ return DEFAULT_SPACE_HFSP; }
@@ -77,15 +78,14 @@ async function setupThree(){
 
   bgMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(40,22),
-    new THREE.MeshBasicMaterial({color:0x1b2850})
+    new THREE.MeshBasicMaterial({color:0x000000})
   );
   bgMesh.position.set(0,10,-10);
   scene.add(bgMesh);
 
-  // Local font (examples/fonts/*)
+  // Local font file
   const fontJSON = await fetch('./vendor/three/examples/fonts/helvetiker_regular.typeface.json').then(r=>r.json());
-  const loader = new FontLoader();
-  const font = loader.parse(fontJSON);
+  const font = new FontLoader().parse(fontJSON);
 
   const textGeo = new TextGeometry("A", {
     font, size:1.6, height:0.35, curveSegments:8,
@@ -178,7 +178,7 @@ async function setBgImageFromSpace(theme, style, spaceUrlRaw){
       bgMesh.material.map = tx;
       bgMesh.material.needsUpdate = true;
       return true;
-    }catch(e){ /* try next */ }
+    }catch(e){}
   }
   return false;
 }
@@ -332,7 +332,7 @@ function handleStop(){
 }
 
 genBtn?.addEventListener('click', handleGenerate);
-window.AMV_generate = handleGenerate;        // inline fallback for onclick
+window.AMV_generate = handleGenerate;        // inline fallback
 stopBtn?.addEventListener('click', handleStop);
 
 setStatus("Module loaded ✅");
