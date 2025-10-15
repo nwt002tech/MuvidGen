@@ -434,10 +434,6 @@ HTML = f"""
 
     function handleStop(){{ stopLoop(); setStatus("Stopped by user"); }}
 
-    const genBtn = document.getElementById('genBtn');
-    const stopBtn = document.getElementById('stopBtn');
-    const downloadEl = document.getElementById('download');
-
     genBtn?.addEventListener('click', handleGenerate);
     stopBtn?.addEventListener('click', handleStop);
     window.AMV_generate = handleGenerate;
