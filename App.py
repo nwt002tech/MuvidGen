@@ -309,74 +309,72 @@ HTML = f"""
     }}
     function stopLoop(){{ running=false; if (loopRAF) cancelAnimationFrame(loopRAF); }}
 
-    async function recordWithFallback(duration, audioEl){{
-      if (!window.MediaRecorder) throw new Error("MediaRecorder not supported on this device.");
-      const stream = canvas.captureStream(30);
+    async function recordWithFallback(duration, audioEl){
+  if (!window.MediaRecorder) throw new Error("MediaRecorder not supported on this device.");
+  const stream = canvas.captureStream(30);
 
-      const actx = new (window.AudioContext || window.webkitAudioContext)();
-      if (actx.state === "suspended") await actx.resume();
-      const src = actx.createMediaElementSource(audioEl);
-      const dest = actx.createMediaStreamDestination();
-      src.connect(dest); src.connect(actx.destination);
+  const actx = new (window.AudioContext || window.webkitAudioContext)();
+  if (actx.state === "suspended") await actx.resume();
+  const src = actx.createMediaElementSource(audioEl);
+  const dest = actx.createMediaStreamDestination();
+  src.connect(dest); src.connect(actx.destination);
 
-      const mixed = new MediaStream([...stream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
-      const types = (function(){{
-        const c = [
-          'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
-          'video/webm;codecs=vp9,opus',
-          'video/webm;codecs=vp8,opus',
-          'video/webm'
-        ];
-        return c.filter(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported?.(t));
-      }})();
-      const tryList = types.length ? types : [''];
+  const mixed = new MediaStream([...stream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+  const types = pickMimeCandidates();
+  const tryList = types.length ? types : [''];
 
-      const total = Math.max(1, Math.round(duration));
-      let elapsed = 0;
-      progressTimer = setInterval(()=>{{
-        elapsed++;
-        const mm = (n)=>String(Math.floor(n/60)).padStart(2,'0');
-        const ss = (n)=>String(Math.floor(n%60)).padStart(2,'0');
-        setStatus(`Rendering to video… ${{mm(elapsed)}}:${{ss(elapsed)}} / ${{mm(total)}}:${{ss(total)}}`);
-      }}, 1000);
+  const total = Math.max(1, Math.round(duration));
+  let elapsed = 0;
+  progressTimer = setInterval(()=>{
+    elapsed++;
+    const mm = (n)=>String(Math.floor(n/60)).padStart(2,'0');
+    const ss = (n)=>String(Math.floor(n%60)).padStart(2,'0');
+    setStatus(`Rendering to video… ${mm(elapsed)}:${ss(elapsed)} / ${mm(total)}:${ss(total)}`);
+  }, 1000);
 
-      try {{
-        for (const type of tryList){{
-          setStatus(`Rendering to video… (${{type || 'auto'}})`);
-          const chunks = [];
-          let gotData = false;
-          let mr;
-          try {{ mr = new MediaRecorder(mixed, type ? {{mimeType:type}} : {{}}); }}
-          catch(e){{ continue; }}
+  try {
+    for (const type of tryList){
+      setStatus(`Rendering to video… (${type || 'auto'})`);
+      const chunks = [];
+      let gotData = false;
+      let mr;
+      try { mr = new MediaRecorder(mixed, type ? {mimeType:type} : {}); }
+      catch(e){ continue; }
 
-          mr.ondataavailable = (e)=>{{ if (e.data && e.data.size){{ chunks.push(e.data); gotData=true; }} }};
-          const done = new Promise((resolve)=>{{ mr.onstop = resolve; }});
+      mr.ondataavailable = (e)=>{ if (e.data && e.data.size){ chunks.push(e.data); gotData=true; } };
+      const done = new Promise((resolve)=>{ mr.onstop = resolve; });
 
-          const onEnded = ()=>{{ try{{ mr.stop(); }}catch(_){{}} }};
-          audioEl.addEventListener('ended', onEnded, {{once:true}});
+      const onEnded = ()=>{ try{ mr.stop(); }catch(_){} };
+      audioEl.addEventListener('ended', onEnded, {once:true});
 
-          mr.start();
-          await audioEl.play();
+      mr.start();
+      await audioEl.play();
 
-          const maxMs = duration*1000 + 5000;
-          await Promise.race([
-            done,
-            new Promise(r=>setTimeout(r, maxMs).then(()=>{{ try{{ mr.stop(); }}catch(_ ){{ }} }}))
-          ]);
-          await done;
+      const maxMs = duration*1000 + 5000;
 
-          if (gotData && chunks.length){{
-            clearInterval(progressTimer);
-            const outType = type && type.includes("mp4") ? "video/mp4" : (type || "video/webm");
-            return new Blob(chunks, {{type: outType}});
-          }}
-        }}
+      // ✅ FIX: wrap setTimeout in a real Promise
+      await Promise.race([
+        done,
+        new Promise((resolve)=> {
+          setTimeout(()=>{ try{ mr.stop(); }catch(_){}; resolve(); }, maxMs);
+        })
+      ]);
+
+      await done;
+
+      if (gotData && chunks.length){
         clearInterval(progressTimer);
-        throw new Error("No supported recording mime type produced data on this device.");
-      }} finally {{
-        clearInterval(progressTimer);
-      }}
-    }}
+        const outType = type && type.includes("mp4") ? "video/mp4" : (type || "video/webm");
+        return new Blob(chunks, {type: outType});
+      }
+    }
+    clearInterval(progressTimer);
+    throw new Error("No supported recording mime type produced data on this device.");
+  } finally {
+    clearInterval(progressTimer);
+  }
+}
+
 
     async function handleGenerate(){{
       try{{
