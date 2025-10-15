@@ -1,12 +1,23 @@
+/**
+ * Text = 3D Text
+ *
+ * parameters = {
+ *  font: <THREE.Font>, // font
+ *
+ *  size: <float>, // size of the text
+ *  height: <float>, // thickness to extrude text
+ *  curveSegments: <int>, // number of points on the curves
+ *
+ *  bevelEnabled: <bool>, // turn on bevel
+ *  bevelThickness: <float>, // how deep into text bevel goes
+ *  bevelSize: <float>, // how far from text outline (including bevelOffset) is bevel
+ *  bevelOffset: <float> // how far from text outline does bevel start
+ * }
+ */
+
 import {
 	ExtrudeGeometry
-} from '../../../build/three.module.js';
-
-import { Font } from '../core/Font.js';
-
-/**
- * https://github.com/mrdoob/three.js/blob/master/examples/jsm/geometries/TextGeometry.js
- */
+} from 'three';
 
 class TextGeometry extends ExtrudeGeometry {
 
@@ -14,10 +25,9 @@ class TextGeometry extends ExtrudeGeometry {
 
 		const font = parameters.font;
 
-		if ( ! ( font && font.isFont ) ) {
+		if ( font === undefined ) {
 
-			console.error( 'THREE.TextGeometry: font parameter is not an instance of THREE.Font.' );
-			super(); // generate empty geometry
+			super(); // generate default extrude geometry
 
 		} else {
 
@@ -42,5 +52,6 @@ class TextGeometry extends ExtrudeGeometry {
 	}
 
 }
+
 
 export { TextGeometry };
