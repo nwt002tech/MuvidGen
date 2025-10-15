@@ -4,17 +4,13 @@ import streamlit as st
 
 st.set_page_config(page_title="Auto 3D AMV — Embedded", layout="wide")
 
-# --------- REQUIRED FILES (read from your repo) ---------
-P_THREE      = Path("vendor/three/build/three.module.js")
-P_FONTLOADER = Path("vendor/three/examples/jsm/loaders/FontLoader.js")
-P_TEXTGEO    = Path("vendor/three/examples/jsm/geometries/TextGeometry.js")
-P_HELV_JSON  = Path("vendor/three/examples/fonts/helvetiker_regular.typeface.json")
+# Only THREE is needed now (we removed FontLoader/TextGeometry to avoid bare 'three' imports)
+P_THREE = Path("vendor/three/build/three.module.js")
 
-missing = [str(p) for p in [P_THREE, P_FONTLOADER, P_TEXTGEO, P_HELV_JSON] if not p.is_file()]
-if missing:
+if not P_THREE.is_file():
     st.error(
-        "Missing vendor files:\n\n" + "\n".join(f"- {m}" for m in missing) +
-        "\n\nPlace them in these exact paths and redeploy."
+        "Missing vendor file:\n\n- vendor/three/build/three.module.js\n\n"
+        "Add it to your repo at that exact path and redeploy."
     )
     st.stop()
 
@@ -23,19 +19,15 @@ def data_url(path: Path, mime: str) -> str:
     b64 = base64.b64encode(b).decode("ascii")
     return f"data:{mime};base64,{b64}"
 
-THREE_URL      = data_url(P_THREE,      "text/javascript")
-FONTLOADER_URL = data_url(P_FONTLOADER, "text/javascript")
-TEXTGEO_URL    = data_url(P_TEXTGEO,    "text/javascript")
-FONT_JSON_URL  = data_url(P_HELV_JSON,  "application/json")
+THREE_URL = data_url(P_THREE, "text/javascript")
 
-# --------- FULL HTML APP (imports modules from data: URLs) ---------
 HTML = f"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Auto 3D AMV — Embedded (No /static, No CDN)</title>
+  <title>Auto 3D AMV — Embedded (No submodules)</title>
   <style>
     body {{ margin:0; font-family: ui-sans-serif, -apple-system, Segoe UI, Roboto, sans-serif; background:#0b0f19; color:#e6eefc; }}
     .wrap {{ max-width: 1100px; margin: 0 auto; padding: 16px; }}
@@ -52,15 +44,15 @@ HTML = f"""
     .download a {{ color:#7ee787; font-weight:600; }}
     .stage {{ margin-top: 12px; background:#050a16; border:1px solid #22314f; border-radius:12px; padding:10px; }}
     canvas#stage {{ width:100%; height:52vh; display:block; background:#000; }}
-    footer small {{ color:#7a8fb6; }}
     pre#log {{ white-space:pre-wrap;background:#081022;color:#9ed0ff;padding:8px;border-radius:8px;min-height:60px;margin-top:10px }}
+    footer small {{ color:#7a8fb6; }}
   </style>
 </head>
 <body>
   <div class="wrap">
     <header>
-      <h1>🎬 Auto 3D AMV — Embedded Modules</h1>
-      <p>All scripts are embedded as data: URLs. No external paths.</p>
+      <h1>🎬 Auto 3D AMV — Embedded (No Font modules)</h1>
+      <p>All code embedded; using simple 3D character to avoid bare 'three' imports inside submodules.</p>
     </header>
 
     <section class="controls">
@@ -99,30 +91,24 @@ HTML = f"""
     </footer>
   </div>
 
-  <!-- Error trap -->
   <script>
-    (function(){{
-      const statusEl = document.getElementById('status');
-      const logEl = document.getElementById('log');
-      function say(m){{ logEl.textContent += m + "\\n"; console.log(m); }}
-      window.addEventListener('error', e => {{
-        statusEl.textContent = "❌ Script error: " + (e.message||e.type);
-        say((e.filename||"") + ":" + (e.lineno||""));
-      }});
-      window.addEventListener('unhandledrejection', e => {{
-        statusEl.textContent = "❌ Promise error: " + (e.reason && e.reason.message ? e.reason.message : e.reason);
-      }});
-      say("Diagnostics armed…");
-    }})();
+    // log helpers
+    const statusEl = document.getElementById('status');
+    const logEl = document.getElementById('log');
+    function say(m){{ console.log("[AMV]", m); if (logEl) logEl.textContent += m + "\\n"; }}
+    function setStatus(m){{ statusEl.textContent = m; say(m); }}
+    window.addEventListener('error', e => {{
+      setStatus("❌ Script error: " + (e.message||e.type));
+      say((e.filename||"") + ":" + (e.lineno||""));
+    }});
+    window.addEventListener('unhandledrejection', e => {{
+      setStatus("❌ Promise error: " + (e.reason && e.reason.message ? e.reason.message : e.reason));
+    }});
   </script>
 
-  <!-- Import modules from data: URLs -->
+  <!-- Load THREE from a data: URL (no bare specifiers anywhere) -->
   <script type="module">
-    const THREE    = await import("{THREE_URL}");
-    const FontMod  = await import("{FONTLOADER_URL}");
-    const GeoMod   = await import("{TEXTGEO_URL}");
-    const FontLoader   = FontMod.FontLoader;
-    const TextGeometry = GeoMod.TextGeometry;
+    const THREE = await import("{THREE_URL}");
 
     const $ = (sel) => document.querySelector(sel);
     const titleEl = $("#title");
@@ -132,18 +118,13 @@ HTML = f"""
     const spaceEl = $("#space");
     const genBtn = $("#genBtn");
     const stopBtn = $("#stopBtn");
-    const statusEl = $("#status");
     const downloadEl = $("#download");
     const canvas = $("#stage");
-    const logEl = $("#log");
 
     let renderer, scene, camera, singer, bgMesh;
     let running = false, loopRAF = 0, progressTimer = 0;
 
     const DEFAULT_SPACE = "https://nwt002tech-muvidgen.hf.space/";
-
-    function say(msg){{ console.log("[AMV]", msg); if (logEl) logEl.textContent += msg + "\\n"; }}
-    function setStatus(msg){{ statusEl.textContent = msg; say(msg); }}
 
     function toHfSubdomain(u){{
       try{{
@@ -154,7 +135,6 @@ HTML = f"""
         return url + (url.endsWith('/') ? '' : '/');
       }}catch{{ return DEFAULT_SPACE; }}
     }}
-
     function pickMimeCandidates(){{
       const c = [
         'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
@@ -173,8 +153,10 @@ HTML = f"""
     }}
 
     async function setupThree(){{
-      const {{ WebGLRenderer, Scene, PerspectiveCamera, HemisphereLight, DirectionalLight,
-              PlaneGeometry, MeshStandardMaterial, MeshBasicMaterial, Mesh, TextureLoader, Color, SRGBColorSpace }} = THREE;
+      const {{
+        WebGLRenderer, Scene, PerspectiveCamera, HemisphereLight, DirectionalLight,
+        PlaneGeometry, TorusGeometry, SphereGeometry, MeshStandardMaterial, MeshBasicMaterial, Mesh, Color, TextureLoader, SRGBColorSpace
+      }} = THREE;
 
       renderer = new WebGLRenderer({{canvas, preserveDrawingBuffer: true}});
       renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -187,7 +169,7 @@ HTML = f"""
       camera.lookAt(0,1.5,0);
       scene.add(camera);
 
-      const hemi = new HemisphereLight(0xffffff, 0x223355, 1.0);
+      const hemi = new HemisphereLight(0xffffff, 0x223355, 1.1);
       scene.add(hemi);
       const dir = new DirectionalLight(0xffffff, 1.2);
       dir.position.set(3,4,2);
@@ -202,29 +184,35 @@ HTML = f"""
 
       bgMesh = new Mesh(
         new PlaneGeometry(40,22),
-        new MeshBasicMaterial({{color:0x000000}})
+        new MeshBasicMaterial({{color:0x1b2850}})
       );
       bgMesh.position.set(0,10,-10);
       scene.add(bgMesh);
 
-      setStatus("Loading font…");
-      const fontJSON = await fetch("{FONT_JSON_URL}").then(r=>r.json());
-      const font = new FontLoader().parse(fontJSON);
-
-      const textGeo = new TextGeometry("A", {{
-        font, size:1.6, height:0.35, curveSegments:8,
-        bevelEnabled:true, bevelThickness:0.04, bevelSize:0.03
-      }});
-      textGeo.center();
-      singer = new THREE.Mesh(
-        textGeo,
-        new THREE.MeshStandardMaterial({{color:0x1ecb63, metalness:0.3, roughness:0.35}})
+      // Simple "character": sphere (head) + torus (halo/headset)
+      const head = new Mesh(
+        new SphereGeometry(1.1, 32, 24),
+        new MeshStandardMaterial({{color:0x1ecb63, metalness:0.35, roughness:0.35}})
       );
-      singer.position.y = 1.2;
+      head.position.y = 1.4;
+
+      const ring = new Mesh(
+        new TorusGeometry(1.3, 0.08, 16, 64),
+        new MeshStandardMaterial({{color:0xffc857, metalness:0.4, roughness:0.25}})
+      );
+      ring.rotation.x = Math.PI/2;
+      ring.position.y = 1.4;
+
+      singer = new THREE.Group();
+      singer.add(head);
+      singer.add(ring);
       scene.add(singer);
 
       setStatus("3D ready ✅");
     }}
+
+    function setStatus(m){{ const el = document.getElementById('status'); el.textContent = m; console.log('[AMV]', m); }}
+    function say(m){{ const log = document.getElementById('log'); if (log) log.textContent += m + "\\n"; console.log('[AMV]', m); }}
 
     async function decodeAudio(file){{
       const buf = await file.arrayBuffer();
@@ -239,15 +227,10 @@ HTML = f"""
       const sr = audioBuf.sampleRate;
       const hop = Math.floor(sr * 0.05);
       const energies = [];
-      for (let i=0;i<ch.length;i+=hop){{
-        let s=0; for (let j=0;j<hop && i+j<ch.length;j++) s += ch[i+j]*ch[i+j];
-        energies.push(Math.sqrt(s/hop));
-      }}
+      for (let i=0;i<ch.length;i+=hop){{ let s=0; for (let j=0;j<hop && i+j<ch.length;j++) s += ch[i+j]*ch[i+j]; energies.push(Math.sqrt(s/hop)); }}
       const win = 20, peaks = [];
-      for (let i=win;i<energies.length-win;i++){{
-        let avg=0; for (let k=i-win;k<i+win;k++) avg += energies[k]; avg/=(2*win);
-        if (energies[i] > avg*1.35){{ peaks.push((i*hop)/sr); i+=6; }}
-      }}
+      for (let i=win;i<energies.length-win;i++){{ let avg=0; for (let k=i-win;k<i+win;k++) avg += energies[k]; avg/=(2*win);
+        if (energies[i] > avg*1.35){{ peaks.push((i*hop)/sr); i+=6; }} }}
       return peaks;
     }}
 
@@ -275,7 +258,7 @@ HTML = f"""
     async function setBgImageFromSpace(theme, style, spaceUrlRaw){{
       const spaceUrl = toHfSubdomain(spaceUrlRaw || DEFAULT_SPACE);
       const prompt = (`${{style}}; ${{theme}}`).slice(0, 500);
-      const endpoints = ["/api/predict","/run/predict"];
+      const endpoints = ["/api/predict", "/run/predict"];
       for (const ep of endpoints){{
         try{{
           const res = await fetch(spaceUrl.replace(/\\/$/,"") + ep, {{
@@ -301,7 +284,7 @@ HTML = f"""
     }}
 
     function animateFrame(tSec, beats){{
-      singer.rotation.y = Math.sin(tSec*0.7)*0.2;
+      singer.rotation.y = Math.sin(tSec*0.7)*0.25;
       let bounce=0; for (const bt of beats){{ if (Math.abs(bt - tSec) < 0.12){{ bounce = 0.35; break; }} }}
       singer.position.y = 1.2 + bounce;
       renderer.render(scene, camera);
@@ -337,7 +320,15 @@ HTML = f"""
       src.connect(dest); src.connect(actx.destination);
 
       const mixed = new MediaStream([...stream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
-      const types = pickMimeCandidates();
+      const types = (function(){{
+        const c = [
+          'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
+          'video/webm;codecs=vp9,opus',
+          'video/webm;codecs=vp8,opus',
+          'video/webm'
+        ];
+        return c.filter(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported?.(t));
+      }})();
       const tryList = types.length ? types : [''];
 
       const total = Math.max(1, Math.round(duration));
@@ -405,13 +396,12 @@ HTML = f"""
         setStatus("Building 3D scene…");
         if (!renderer) await setupThree();
 
-        const shots = storyboard(duration, lyricsEl.value);
-        const effSpace = toHfSubdomain(spaceEl?.value?.trim() || DEFAULT_SPACE);
-        if (spaceEl) spaceEl.value = effSpace;
+        const shots = storyboard(duration, document.getElementById('lyrics').value);
+        const effSpace = toHfSubdomain(document.getElementById('space')?.value?.trim() || DEFAULT_SPACE);
 
         setStatus("Generating AI backgrounds…");
         for (let i=0;i<shots.length;i++){{
-          const ok = await setBgImageFromSpace(shots[i].theme, styleEl.value.trim(), effSpace);
+          const ok = await setBgImageFromSpace(shots[i].theme, document.getElementById('style').value.trim(), effSpace);
           if (!ok) setBgColor(i);
           await new Promise(r=>setTimeout(r, 120));
         }}
@@ -428,10 +418,10 @@ HTML = f"""
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = (titleEl.value || "amv") + (blob.type.includes("mp4") ? ".mp4" : ".webm");
+        a.download = (document.getElementById('title').value || "amv") + (blob.type.includes("mp4") ? ".mp4" : ".webm");
         a.textContent = "Download your video";
-        downloadEl.innerHTML = "";
-        downloadEl.appendChild(a);
+        document.getElementById('download').innerHTML = "";
+        document.getElementById('download').appendChild(a);
         setStatus("Done ✔  (Long-press on iPhone to save)");
       }}catch(e){{
         console.error(e);
@@ -444,8 +434,12 @@ HTML = f"""
 
     function handleStop(){{ stopLoop(); setStatus("Stopped by user"); }}
 
-    document.getElementById('genBtn')?.addEventListener('click', handleGenerate);
-    document.getElementById('stopBtn')?.addEventListener('click', handleStop);
+    const genBtn = document.getElementById('genBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const downloadEl = document.getElementById('download');
+
+    genBtn?.addEventListener('click', handleGenerate);
+    stopBtn?.addEventListener('click', handleStop);
     window.AMV_generate = handleGenerate;
 
     setStatus("Module loaded ✅");
